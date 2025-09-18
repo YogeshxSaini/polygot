@@ -319,12 +319,13 @@ Checksum: {checksum}
 Creation Date: {os.path.getctime(polyglot_path)}
 Size: {self.get_file_size_gb(polyglot_path):.2f} GB
 
-HIDDEN FILES:
-"""
-        for file in hidden_files:
-            content += f"- {file}\n"
+        # Write ZIP to disk (not memory)
+        temp_zip_path = f"{output_base}_temp.zip"
+        with zipfile.ZipFile(temp_zip_path, 'w', zipfile.ZIP_STORED) as zipf:
+            for file_path, arcname in files_to_hide.items():
+                zipf.write(file_path, arcname)
         
-        content += f"""
+        zip_size = os.path.getsize(temp_zip_path)
 EXTRACTION INSTRUCTIONS:
 
 Method 1: Using Python
