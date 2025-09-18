@@ -229,56 +229,57 @@ class PolyglotTool:
     
     def create_split_polyglot(self, video_path, files_to_hide, output_base, split_size_gb):
         """Create split polyglot videos"""
+        import math
         print(f"\nCreating split polyglot videos ({split_size_gb}GB each)...")
-        
+
         # Read video
         with open(video_path, 'rb') as f:
             video_data = f.read()
-        
+
         # Create ZIP first
         temp_zip = f"{output_base}_temp.zip"
         with zipfile.ZipFile(temp_zip, 'w', zipfile.ZIP_DEFLATED) as zipf:
             for file_path, arcname in files_to_hide.items():
                 zipf.write(file_path, arcname)
         self.temp_files.append(temp_zip)
-        
+
         # Read ZIP data
         with open(temp_zip, 'rb') as f:
             zip_data = f.read()
-        
+
         # Split parameters
-        split_size = split_size_gb * 1024 ** 3
-        num_parts = (len(zip_data) + split_size - 1) // split_size
-        
+        split_size = int(split_size_gb * 1024 ** 3)
+        num_parts = math.ceil(len(zip_data) / split_size)
+
         print(f"Splitting {len(zip_data) / (1024**3):.2f} GB into {num_parts} parts...")
-        
+
         # Create parts
         polyglot_videos = []
         part_checksums = []
-        
+
         for i in range(num_parts):
             part_num = i + 1
             start = i * split_size
             end = min((i + 1) * split_size, len(zip_data))
             part_data = zip_data[start:end]
-            
+
             # Create polyglot video
             output_path = f"{output_base}_part{part_num}.mp4"
             with open(output_path, 'wb') as f:
                 f.write(video_data)
                 f.write(part_data)
-            
+
             polyglot_videos.append(output_path)
             part_checksums.append(hashlib.md5(part_data).hexdigest())
-            
+
             print(f"✅ Created {output_path} ({len(part_data) / (1024**3):.2f} GB)")
-        
+
         # Original checksum
         original_checksum = self.calculate_md5(temp_zip)
-        
+
         # Create recovery package
         self.create_split_recovery_package(output_base, polyglot_videos, original_checksum, part_checksums)
-        
+
         print(f"\n🎉 Created {num_parts} polyglot videos!")
         print(f"🔒 Original checksum: {original_checksum}")
         print("💾 Recovery package created with extraction tools")
