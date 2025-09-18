@@ -1,0 +1,11 @@
+# Ignore video and binary files
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.zip
+*.bin
+__pycache__/
+*.pyc
+.env
+.DS_Store
