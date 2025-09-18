@@ -254,51 +254,66 @@ class PolyglotTool:
         self.create_recovery_info(output_path, checksum, list(files_to_hide.values()))
     
     def create_split_polyglot(self, video_path, files_to_hide, output_base, split_size_gb):
-        """Create split polyglot videos"""
+        """Create split polyglot videos (disk-based for massive files)"""
         import math
-        print(f"\nCreating split polyglot videos ({split_size_gb}GB each)...")
+        import time
+        print(f"\nCreating split polyglot videos ({split_size_gb}GB each)... (disk streaming)")
 
-        # Read video
-        with open(video_path, 'rb') as f:
-            video_data = f.read()
-
-        # Create ZIP first
-        temp_zip = f"{output_base}_temp.zip"
-        with zipfile.ZipFile(temp_zip, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        # Write ZIP to disk (not memory)
+        temp_zip_path = f"{output_base}_temp.zip"
+        with zipfile.ZipFile(temp_zip_path, 'w', zipfile.ZIP_STORED) as zipf:
             for file_path, arcname in files_to_hide.items():
                 zipf.write(file_path, arcname)
-        self.temp_files.append(temp_zip)
 
-        # Read ZIP data
-        with open(temp_zip, 'rb') as f:
-            zip_data = f.read()
-
-        # Split parameters
+        zip_size = os.path.getsize(temp_zip_path)
         split_size = int(split_size_gb * 1024 ** 3)
-        num_parts = math.ceil(len(zip_data) / split_size)
+        num_parts = math.ceil(zip_size / split_size)
 
-        print(f"Splitting {len(zip_data) / (1024**3):.2f} GB into {num_parts} parts...")
+        print(f"Splitting {zip_size / (1024**3):.2f} GB into {num_parts} parts...")
 
-        # Create parts
         polyglot_videos = []
         part_checksums = []
 
         for i in range(num_parts):
             part_num = i + 1
             start = i * split_size
-            end = min((i + 1) * split_size, len(zip_data))
-            part_data = zip_data[start:end]
-            from io import BytesIO
-            zip_buffer = BytesIO()
-            with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_STORED) as zipf:
-                for file_path, arcname in files_to_hide.items():
-                    zipf.write(file_path, arcname)
-            zip_data = zip_buffer.getvalue()
+            end = min((i + 1) * split_size, zip_size)
+            part_len = end - start
+            output_path = f"{output_base}_part{part_num}.mp4"
+            print(f"Writing {output_path} ({part_len / (1024**3):.2f} GB)...")
+            
+            with open(video_path, 'rb') as v_in, open(output_path, 'wb') as out:
+                # Copy video
+                shutil.copyfileobj(v_in, out, length=16*1024*1024)
+                # Copy ZIP part
+                with open(temp_zip_path, 'rb') as zip_in:
+                    zip_in.seek(start)
+                    copied = 0
+                    chunk_size = 16*1024*1024
+                    start_time = time.time()
+                    while copied < part_len:
+                        to_read = min(chunk_size, part_len - copied)
+                        chunk = zip_in.read(to_read)
+                        if not chunk:
+                            break
+                        out.write(chunk)
+                        copied += len(chunk)
+                        percent = copied / part_len * 100
+                        speed = copied / (time.time() - start_time + 1e-6) / (1024*1024)
+                        print(f"\r  {percent:.1f}% ({copied // (1024*1024)} MB / {part_len // (1024*1024)} MB) at {speed:.1f} MB/s", end="")
+                    print()
+            
+            # Calculate checksum for this part
+            with open(output_path, 'rb') as f:
+                f.seek(os.path.getsize(video_path))
+                part_data = f.read()
+                part_checksums.append(hashlib.md5(part_data).hexdigest())
+            
+            polyglot_videos.append(output_path)
+            print(f"✅ Created {output_path} ({part_len / (1024**3):.2f} GB)")
 
-            print(f"✅ Created {output_path} ({len(part_data) / (1024**3):.2f} GB)")
-
-        # Original checksum
-        original_checksum = self.calculate_md5(temp_zip)
+        # Original checksum (of the full ZIP)
+        original_checksum = self.calculate_md5(temp_zip_path)
 
         # Create recovery package
         self.create_split_recovery_package(output_base, polyglot_videos, original_checksum, part_checksums)
@@ -306,6 +321,12 @@ class PolyglotTool:
         print(f"\n🎉 Created {num_parts} polyglot videos!")
         print(f"🔒 Original checksum: {original_checksum}")
         print("💾 Recovery package created with extraction tools")
+
+        # Clean up temp zip
+        try:
+            os.remove(temp_zip_path)
+        except Exception:
+            pass
     
     def create_recovery_info(self, polyglot_path, checksum, hidden_files):
         """Create recovery information for single polyglot"""
@@ -319,13 +340,12 @@ Checksum: {checksum}
 Creation Date: {os.path.getctime(polyglot_path)}
 Size: {self.get_file_size_gb(polyglot_path):.2f} GB
 
-        # Write ZIP to disk (not memory)
-        temp_zip_path = f"{output_base}_temp.zip"
-        with zipfile.ZipFile(temp_zip_path, 'w', zipfile.ZIP_STORED) as zipf:
-            for file_path, arcname in files_to_hide.items():
-                zipf.write(file_path, arcname)
+HIDDEN FILES:
+"""
+        for file in hidden_files:
+            content += f"- {file}\n"
         
-        zip_size = os.path.getsize(temp_zip_path)
+        content += f"""
 EXTRACTION INSTRUCTIONS:
 
 Method 1: Using Python
