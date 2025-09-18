@@ -194,36 +194,62 @@ class PolyglotTool:
             self.create_single_polyglot(video_path, files_to_hide, output_base)
     
     def create_single_polyglot(self, video_path, files_to_hide, output_base):
-        """Create a single polyglot video"""
-        print(f"\nCreating single polyglot video...")
-        
-        # Read video
-        with open(video_path, 'rb') as f:
-            video_data = f.read()
-        
-        # Create ZIP in memory
-        zip_buffer = BytesIO()
-        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zipf:
-            for file_path, arcname in files_to_hide.items():
-                zipf.write(file_path, arcname)
-                print(f"Added: {arcname}")
-        
-        zip_data = zip_buffer.getvalue()
-        
-        # Create polyglot
+        """Create a single polyglot video (streaming, fast, with progress bar)"""
+        from io import BytesIO
+        import time
+        print(f"\nCreating single polyglot video (streaming)...")
+
         output_path = f"{output_base}.mp4"
-        with open(output_path, 'wb') as f:
-            f.write(video_data)
-            f.write(zip_data)
-        
+
+        video_size = os.path.getsize(video_path)
+        chunk_size = 16 * 1024 * 1024  # 16MB
+        copied = 0
+
+        # Stream video to output with progress
+        with open(video_path, 'rb') as v_in, open(output_path, 'wb') as out:
+            print("Copying video data:")
+            start_time = time.time()
+            while True:
+                chunk = v_in.read(chunk_size)
+                if not chunk:
+                    break
+                out.write(chunk)
+                copied += len(chunk)
+                percent = copied / video_size * 100
+                speed = copied / (time.time() - start_time + 1e-6) / (1024*1024)
+                print(f"\r  {percent:.1f}% ({copied // (1024*1024)} MB / {video_size // (1024*1024)} MB) at {speed:.1f} MB/s", end="")
+            print()
+
+            # Create ZIP in memory (still needed for now, but can be optimized further)
+            zip_buffer = BytesIO()
+            with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_STORED) as zipf:
+                for file_path, arcname in files_to_hide.items():
+                    zipf.write(file_path, arcname)
+                    print(f"Added: {arcname}")
+            zip_buffer.seek(0)
+            zip_size = len(zip_buffer.getvalue())
+            copied_zip = 0
+            print("Copying ZIP data:")
+            start_time = time.time()
+            while True:
+                chunk = zip_buffer.read(chunk_size)
+                if not chunk:
+                    break
+                out.write(chunk)
+                copied_zip += len(chunk)
+                percent = copied_zip / zip_size * 100
+                speed = copied_zip / (time.time() - start_time + 1e-6) / (1024*1024)
+                print(f"\r  {percent:.1f}% ({copied_zip // (1024*1024)} MB / {zip_size // (1024*1024)} MB) at {speed:.1f} MB/s", end="")
+            print()
+
         # Calculate checksum
         checksum = self.calculate_md5(output_path)
-        
+
         print(f"\n✅ Polyglot video created: {output_path}")
         print(f"📊 Size: {self.get_file_size_gb(output_path):.2f} GB")
         print(f"🔒 Checksum: {checksum}")
         print(f"📦 Contains: {len(files_to_hide)} hidden files")
-        
+
         # Create recovery info
         self.create_recovery_info(output_path, checksum, list(files_to_hide.values()))
     
@@ -262,15 +288,12 @@ class PolyglotTool:
             start = i * split_size
             end = min((i + 1) * split_size, len(zip_data))
             part_data = zip_data[start:end]
-
-            # Create polyglot video
-            output_path = f"{output_base}_part{part_num}.mp4"
-            with open(output_path, 'wb') as f:
-                f.write(video_data)
-                f.write(part_data)
-
-            polyglot_videos.append(output_path)
-            part_checksums.append(hashlib.md5(part_data).hexdigest())
+            from io import BytesIO
+            zip_buffer = BytesIO()
+            with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_STORED) as zipf:
+                for file_path, arcname in files_to_hide.items():
+                    zipf.write(file_path, arcname)
+            zip_data = zip_buffer.getvalue()
 
             print(f"✅ Created {output_path} ({len(part_data) / (1024**3):.2f} GB)")
 
